@@ -1,27 +1,4 @@
 /**
- * Starting features to support
- * 
- * - Declarations
- *  - let
- * - Expressions
- *    - Literals
- * - Keywords:
- *    - Box
- *    - Circle
- *    - Add
- * 
- * Define operations that can be done on the output:
- *  - Creating a box
- *  - Changing the text of a box
- *  - Moving a box
- * 
- * 
- * From input change -> output : Easy, just re run it
- * From output change -> input : Propogation changes
- * 
- * 
- * Code Input
- * Code will be parsed by acorn, and translated into a list of definitions
  * 
  * 
  * This can be done with deep copying, since after a change all the code will be re-ran.
@@ -37,8 +14,9 @@
  * }
  * 
  * 
- * This is an example of why blocks need to create a new expression trace object
- * for every instance
+ * This is an example of why getting the value of an expression trace needs the
+ * context of the variable environment. Additionally, it shows why visual objects
+ * that use the same variable 
  * 
  *  function AddSquare (text) {
        let sq = Rect(100, 100, text, 50, 70);
@@ -48,11 +26,13 @@
     AddSquare("I Love you");
  * 
 */
+
 /**
  * - Check out sketch n sketch
  * - Formalize what im doing (Latex) (Robby's formalism)
  * - Seperate this file into modules
  * 
+ *
 function hello (diff) {
     let diff1 = diff;
     return diff1;
@@ -61,7 +41,18 @@ let sq = Rect(100, 100, hello("sadss"), 50, 50);
 let sq2 = Rect(100, 100, hello("bongo"), 200, 200);
 Add(sq);
 Add(sq2);
-
+ */
+/**
+ * 
+ * Example of why all instances of a function call should share the same
+ * expression traces:
+ * 
+ * function hi() {
+ *      return 3 + 4;
+ * }
+ * 
+ * Add(Rect(hi(), ....))
+ * Add(Rect(hi(), ....))
  */
 let acorn = require("acorn");
 
@@ -137,7 +128,8 @@ class ExpTrace {
     }
 
     /**
-     * Populates the value field and returns it
+     * Evaluates an expression trace by populating the value field and 
+     * then returning it.
      * 
      * @returns {Value}
      */
@@ -145,41 +137,15 @@ class ExpTrace {
         throw new Error("Abstract eval() method called!")
     }
 
-}
-
-/**
- * A Lambda expression can exist in two forms:
-* - A class only containing the parsed lambda expression JSON object from Acorn
-* - An expression trace
-* 
-* A lambda expression may be constructed with only the parsed data
-* because every instance of a call to a lambda expression has to contain
-* a copied version of the lambda expression trace. Storing the parsed data,
-* and then parsing it into expression trace makes copying a lambda expression 
-* trace much easier than implementing a copy() function for each expression trace.
- * 
- */
-
-class ParsedLambda extends ExpTrace {
-
     /**
+     * Given a variable environment, gets the value of the expression trace.
+     * Does not re-evaluate the expression.
      * 
-     * @param {JSON} parsedData : The parsed expression information from acorn
-     * @param {*} jsCode : The javascript code the user wrote to make this lambda expression
+     * @param {JSON} env 
+     * @returns {Value}
      */
-    constructor(parsedData, jsCode) {
-        super([]);
-        this.parsedData = parsedData;
-        this.jsCode = jsCode;
-        this.value = null;
-    }
-
-    eval(env) {
-        this.value = new Closure(this.parsedData, shallowCopy(env));
-    }
-
-    toJS() {
-        return this.jsCode;
+    getValueObj(env) {
+        return this.value;
     }
 
 }
@@ -188,7 +154,6 @@ class ParsedLambda extends ExpTrace {
 class Lambda extends ExpTrace {
 
     /**
-     * This class can only be created by a FunctionCall expression trace.
      * 
      * @param {List<String>} params 
      * @param {List<Definition | ExpTrace>} body 
@@ -204,7 +169,10 @@ class Lambda extends ExpTrace {
     }
 
     eval(env) {
-        throw new Error("eval() called on a copied lambda expression!")
+
+        this.value = new Closure({params : this.params, returnExp : this.returnExp, type : this.type, body: this.inputs}, 
+                           shallowCopy(env));
+        return this.value;
     }
 
     toJS() {
@@ -336,7 +304,6 @@ class Variable extends ExpTrace {
     * @param {Value} newValue : The new value
     */
     changeValue(newValue, env) {
-        this.value = newValue;
         if (env[this.name] == null) {
             throw new Error(`Unbound variable ${this.name}`);
         }
@@ -348,8 +315,12 @@ class Variable extends ExpTrace {
     }
 
     eval(env) {
-        this.value = env[this.name].value;
-        return env[this.name].value;
+        let value = env[this.name].getValueObj(env);
+        return value;
+    }
+
+    getValueObj(env) {
+        return this.eval(env);
     }
 }
 
@@ -362,15 +333,15 @@ function evalKeyword(keyword, env, inputs) {
         throw new SyntaxError(`${keyword} is supposed to take in ${visualKeywords[keyword].length} arguments!`);
     }
     for (let i = 0; i < inputs.length; i++) {
-        if (!(inputs[i].value instanceof visualKeywords[keyword][i])) {
-            let argType = inputs[i].value.constructor.name;
+        if (!(inputs[i].getValueObj(env) instanceof visualKeywords[keyword][i])) {
+            let argType = inputs[i].getValueObj(env).constructor.name;
             let expectedType = visualKeywords[keyword][i].name;
             throw new TypeError(`#${i + 1} argument call to function ${keyword} has incorrect type ${argType} when expected type is ${expectedType}!`);
         }
     }
 
     if (keyword == "Add") {
-        let shape = inputs[0].value;
+        let shape = inputs[0].getValueObj(env);
         if (shape != null) {
             visualOutput[shape.id] = shape;
         }
@@ -382,6 +353,7 @@ function evalKeyword(keyword, env, inputs) {
                            inputs[4], shallowCopy(env));
     }
 }
+
 class FunctionCall extends ExpTrace {
 
     /**
@@ -395,7 +367,6 @@ class FunctionCall extends ExpTrace {
     constructor(name, args) {
         super(args);
         this.name = name;
-        this.lambdaCopy = null;
     }
 
     toJS() {
@@ -426,9 +397,7 @@ class FunctionCall extends ExpTrace {
             if (lambda.params.length != this.inputs.length) {
                 throw new SyntaxError(`${this.name} expects ${this.params.length} parameters but received ${this.inputs.length} arguments!`);
             }
-            // For every function call, the function body is copied to have their own instances of expression traces.
-            // Two function calls cannot share the same expression traces in the same function body.
-            // this.lambdaCopy = structuredClone(lambda);
+            this.value = lambda.callFunction(this.inputs);
         }
         // Keywords
         else {
@@ -444,12 +413,12 @@ class FunctionCall extends ExpTrace {
      */
     changeValue(newValue, env) {
         // If the values are equivalent, no change is needed
-        if (newValue.getValue() == this.value.getValue()) {
+        if (newValue.getValue() == this.getValueObj(env).getValue()) {
             return;
         }
         let lambda = env[this.name];
         // Extend the closure
-        let extendedEnv = shallowCopy(lambda.value.env);
+        let extendedEnv = shallowCopy(lambda.getValueObj(env).env);
 
         // Map each parameter to each argument expression trace
         for (let i = 0; i < this.inputs.length; i++) {
@@ -560,7 +529,6 @@ class Closure extends Value {
         this.returnExp = lambda.returnExp;
     }
 
-
 }
 
 /**
@@ -612,11 +580,12 @@ class RectDiv extends ShapeDiv {
 
     toHTML() {
         // TODO: change options to be a JSON
-        let width = this.width.value.getValue();
-        let height = this.height.value.getValue();
-        let x = this.x.value.getValue();
-        let y = this.y.value.getValue();
-        let text = this.text.value.getValue();
+        let env = this.env;
+        let width = this.width.getValueObj(env).getValue();
+        let height = this.height.getValueObj(env).getValue();
+        let x = this.x.getValueObj(env).getValue();
+        let y = this.y.getValueObj(env).getValue();
+        let text = this.text.getValueObj(env).getValue();
         
 
         return `<div class="shape" id = "${this.id}"
@@ -695,30 +664,6 @@ function execCode() {
 /**
  * 
  * @param {JSON} exp 
- * @returns Lambda
- */
-function parseLambda(exp) {
-    let params = [];
-    for (let param of exp.params) {
-        if (param.type != "Identifier") {
-            throw new SyntaxError("Unsupported parameter type!");
-        }
-        params.push(param.name);
-    }
-    let lastExp = exp.body.body[exp.body.body.length - 1];
-    let returnStatement = null;
-    if (lastExp.type == "ReturnStatement") {
-        returnStatement = parseExp(lastExp.argument);
-        // Remove the return statement
-        exp.body.body.pop(); 
-    }
-    let body = parseStatements(exp.body.body);
-    let lambda = new Lambda(null, params, body, returnStatement, exp.type);
-    return lambda;
-}
-/**
- * 
- * @param {JSON} exp 
  * @returns ExpTrace
  */
 function parseExp(exp) {
@@ -746,7 +691,23 @@ function parseExp(exp) {
         return new Variable(exp.name);
     }
     else if (exp.type == "ArrowFunctionExpression" || exp.type == "FunctionDeclaration") {
-        return new Lambda(exp);
+        let params = [];
+        for (let param of exp.params) {
+            if (param.type != "Identifier") {
+                throw new SyntaxError("Unsupported parameter type!");
+            }
+            params.push(param.name);
+        }
+        let lastExp = exp.body.body[exp.body.body.length - 1];
+        let returnStatement = null;
+        if (lastExp.type == "ReturnStatement") {
+            returnStatement = parseExp(lastExp.argument);
+            // Remove the return statement
+            exp.body.body.pop(); 
+        }
+        let body = parseStatements(exp.body.body);
+        let lambda = new Lambda(params, body, returnStatement, exp.type);
+        return lambda;
     }
     throw new SyntaxError(exp.type + " is currently not supported!");
 }
@@ -768,9 +729,7 @@ function visualOutputToHTML() {
         if (shape == null) {
             continue;
         }
-        console.log(JSON.stringify(shape, null, 2));
         let htmlShape = shape.toHTML();
-        console.log(htmlShape);
         html += htmlShape;
     }
     return html;
