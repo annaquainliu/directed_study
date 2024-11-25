@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML/CSS Live Synchronization</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="split_pane">
+        <form id="code" action="/compute">
+            <textarea id="code_input" name="code"></textarea>
+            <button type="submit">Compute</button>
+        </form>
+        <div id="toolbar">
+            <form id="change_text_form" action="/change_text">
+                <input name="change_text" placeholder="Click Div and Change Text">
+                <button type="submit">Change Text</button>
+            </form>
+        </div>
+        <div id="visual">
+            <!-- visual -->
+        </div>
+    </div>
+</body>
+<script src="visual.js"></script>
+</html>
