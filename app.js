@@ -29,7 +29,6 @@ app.get('/compute', (req, res) => {
 
 app.get("/click", (req, res) => {
   currentlyClickedId = req.query.id;
-  console.log(currentlyClickedId);
   res.send({});
 });
 

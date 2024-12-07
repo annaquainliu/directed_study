@@ -18,12 +18,42 @@
  * context of the variable environment. Additionally, it shows why visual objects
  * that use the same variable 
  * 
- *  function AddSquare (text) {
-       let sq = Rect(100, 100, text, 50, 70);
-       Add(sq);
-    }
-    AddSquare("sds");
-    AddSquare("I Love you");
+function AddSquare (text) {
+    let sq = Rect(100, 100, text, 50, 70);
+    Add(sq);
+}
+AddSquare("sds");
+AddSquare("I Love you");
+ * 
+ * 
+ *  RECT
+ * 
+ * Any syntactic token that can be updated from the visual output must be tagged with a location
+ * 
+ * ----------------------------------------------------
+ * Parameters of the same name
+ * 
+ * AddSquare's closure is extended to have the variables {text -> "asdsa"}
+ * makeText's closure is extended to have {text -> VAR(text, "asdsa")}
+ * 
+ * This shows that the variable expression trace should hold a reference to the environemnt
+ * it was created in
+ * 
+function makeText(text) {
+    return text;
+}
+  
+function AddSquare (text, y) {
+    let sq = Rect(100, 100, makeText(text), 50, y);
+    Add(sq);
+}
+   
+AddSquare("asdsa", 50);
+AddSquare("bingo", 100);
+ *
+ * 
+ * 
+ * 
  * 
 */
 
@@ -41,6 +71,19 @@ let sq = Rect(100, 100, hello("sadss"), 50, 50);
 let sq2 = Rect(100, 100, hello("bongo"), 200, 200);
 Add(sq);
 Add(sq2);
+
+-------------------------------------------------------------
+let text2 = "asdsad"
+let text = text2
+let sq = Rect(100, 100, text, 50, 50);
+
+At this point, text will be set to a value that has a notated location.
+Every value has a location. (location |--> value)
+
+This model only changes *values*.
+------------------------------------------------------------
+let x = y + z
+
  */
 /**
  * 
@@ -56,15 +99,17 @@ Add(sq2);
  */
 let acorn = require("acorn");
 
-// The list of Definitions and ExpTraces
+// The list of Definitions and Exps
 let program = [];
 
 // The visual output is stored as a map of shape ids to shape instances
 let visualOutput = {};
 
-// Map of variable names to references of their assigned expression traces
-let varToExp = {};
+// Map of variable names to locations
+let varToLoc = {};
 
+// Map of locations to (Equation, Value) tuples
+let locToValue = {};
 
 /**
  * Given a variable environment, copies the key and value to a new environment 
@@ -79,36 +124,99 @@ function shallowCopy(env) {
     }
     return newEnv;
 }
-/**
- * ExpTrace is a class that records an expression's value, along with
- * the full parsed expression 
- * 
- */
-class ExpTrace {
+
+
+class Equation {
+
+    constructor() {}
+
+    /**
+     * Given a value, find all possible sigmas to make the equation to equal that value
+     * 
+     * @param {Value} value to be changed to
+     * @param {Value} ogVal : The original value of the equation
+     * 
+     * @returns {List<JSON>} possible outputs
+     */
+    change(val, ogVal) {
+        throw new Error("Called abstract change() function!");
+    };
+}
+
+class None extends Equation {
+
+    constructor() {
+        super();
+    }
+
+    change(val) {
+        return [{}];
+    }
+}
+
+class SingleLoc extends Equation {
+
+    constructor(loc) {
+        super();
+        this.loc = loc;
+    }
+
+    change(val) {
+        let trace = locToValue[this.loc];
+        let outputs = trace[0].change(val);
+        for (let output of outputs) {
+            output[this.loc] = [trace[0], val];
+        }
+        return outputs;
+    }
+
+    getValue() {
+        return locToValue[this.loc][1].getValue();
+    }
+
+    getValueObj() {
+        return locToValue[this.loc][1];
+    }
+}
+
+class AddEq extends Equation {
 
     /**
      * 
-     * @param {Value} value 
-     * @param {List<ExpTrace>} inputs 
+     * @param {SingleLoc} fst 
+     * @param {SingleLoc} snd 
+     */
+    constructor(fst, snd) {
+        super();
+        this.fst = fst;
+        this.snd = snd;
+    }
+
+    change(val) {
+        let output1 = this.fst.change(new NumValue(val.getValue() - this.snd.getValue()));
+        let output2 = this.snd.change(new NumValue(val.getValue() - this.fst.getValue()));
+        return output1.concat(output2);
+    }
+}
+
+/**
+ * Exp is a class that represents an expression
+ * 
+ */
+class Exp {
+
+    static loc = 0;
+    /**
+     * 
+     * @param {List<Exp>} inputs 
      */
     constructor(inputs) {
-        this.value = null;
         this.inputs = inputs;
         this.topLevel = false;
     }
 
     setTopLevel(topLevel) {
         this.topLevel = topLevel;
-    }
-    /**
-     * changeValue() executes changes to expressions from visual changes from 
-     * the output.
-     * 
-     * @param {String | Integer} newValue 
-     * @param {JSON} : env of variable names to their expression traces
-     */
-    changeValue(newValue, env) {
-        throw new Error("Abstract changeValue() method called!")
     }
 
     toJS() {
@@ -119,45 +227,36 @@ class ExpTrace {
         return str + (this.topLevel ? ";\n" : "");
     }
 
-    /**
-     * 
-     * @param {Value} value 
-     */
-    setValue(value) {
-        this.value = value;
+    static newLocation() {
+        Exp.loc++;
+        return Exp.loc;
+    }
+
+    static reParse() {
+        ShapeDiv.idCounter = 0;
+        varToLoc = {};
+        locToValue = {};
+        Exp.loc = 0;
     }
 
     /**
-     * Evaluates an expression trace by populating the value field and 
-     * then returning it.
      * 
-     * @returns {Value}
+     * @param {JSON} rho : Mapping of names to locations
+     * @returns {Integer} location
      */
-    eval(env) {
+    eval(rho) {
         throw new Error("Abstract eval() method called!")
-    }
-
-    /**
-     * Given a variable environment, gets the value of the expression trace.
-     * Does not re-evaluate the expression.
-     * 
-     * @param {JSON} env 
-     * @returns {Value}
-     */
-    getValueObj(env) {
-        return this.value;
     }
 
 }
 
-
-class Lambda extends ExpTrace {
+class Lambda extends Exp {
 
     /**
      * 
      * @param {List<String>} params 
-     * @param {List<Definition | ExpTrace>} body 
-     * @param {ExpTrace} returnExp
+     * @param {List<Definition | Exp>} body 
+     * @param {Exp} returnExp
      * @param {String} type : Either arrow or function declaration
      */
     constructor(params, body, returnExp, type) {
@@ -165,14 +264,14 @@ class Lambda extends ExpTrace {
         this.params = params;
         this.returnExp = returnExp;
         this.type = type;
-        this.value = null;
     }
 
-    eval(env) {
-
-        this.value = new Closure({params : this.params, returnExp : this.returnExp, type : this.type, body: this.inputs}, 
-                           shallowCopy(env));
-        return this.value;
+    eval(rho) {
+        let newLoc = Exp.newLocation();
+        let value = new Closure({params : this.params, returnExp : this.returnExp, type : this.type, body: this.inputs}, 
+                                shallowCopy(rho));
+        locToValue[newLoc] = [new None(), value];
+        return newLoc;
     }
 
     toJS() {
@@ -198,74 +297,40 @@ class Lambda extends ExpTrace {
         return this.addNewLineIfGlobal(jsStr);
     }
 
-    /**
-     * Note: the list of inputs have already been evaluated
-     * 
-     * @param {List<ExpTrace>} inputs 
-     * @returns {Value} return value
-     */
-    callFunction(inputs) {
-        // Extend the environment
-        let extendedEnv = shallowCopy(this.value.env);
-       
-        for (let i = 0; i < this.params.length; i++) {
-            extendedEnv[this.params[i]] = inputs[i];
-        } 
-        
-        // Run every statement in the body
-        for (let statement of this.inputs) {
-            statement.eval(extendedEnv);
-        }
-
-        if (this.returnExp == null) {
-            return new Null();
-        }
-
-        return this.returnExp.eval(extendedEnv);
-    }
-
-    // The lambda will choose the return statement to propogate the change to
-    changeReturnValue(newValue, env) {
-        // Execute each statement to declare potential variables in env
-        for (let statement of this.inputs) {
-            statement.eval(env);
-        }
-        this.returnExp.changeValue(newValue, env);
-    }
 }
 
-class Literal extends ExpTrace {
+class Literal extends Exp {
 
      /**
      * 
      * @param {String | Integer} value 
-     * @param {List<ExpTrace>} inputs 
+     * @param {List<Exp>} inputs 
      */
-     constructor() {
+     constructor(loc, value) {
         super([]);
-    }
-
-    changeValue(newValue, env) {
-        this.value = newValue;
+        this.loc = loc;
+        this.value = value;
     }
 
     toJS() {
-        return `${this.value.getValue()}`;
+        return `${locToValue[this.loc][1].getValue()}`;
     }
 
     eval(env) {
-        return this.value;
+        if (locToValue[this.loc] == null) {
+            locToValue[this.loc] = [new None(), this.value];
+        }
+        return this.loc;
     }
 }
 
 class Num extends Literal {
 
-    constructor(value) {
+    constructor(loc, value) {
         if (typeof value !== "number") {
             throw new TypeError("Tried to construct a Num literal with a non-integer value.");
         }
-        super();
-        this.value = new NumValue(value);
+        super(loc, new NumValue(value));
     }
 
     toJS() {
@@ -275,52 +340,68 @@ class Num extends Literal {
 
 class Str extends Literal {
 
-    constructor(value) {
+    constructor(loc, value) {
         if (typeof value !== "string") {
             throw new TypeError("Tried to construct a Str literal with a non-string value.");
         }
-        super();
-        this.value = new StrValue(value);
+        super(loc, new StrValue(value));
     }
 
     toJS() {
-        return this.addNewLineIfGlobal('"' + super.toJS() + '"');
+        let jsStr = this.addNewLineIfGlobal('"' + super.toJS() + '"');
+        console.log(jsStr, "location is ", this.loc);
+        return jsStr;
     }
 }
 
-class Variable extends ExpTrace {
+class Variable extends Exp {
 
     /**
     * 
     * @param {String} name
-    * @param {List<ExpTrace>} inputs 
+    * @param {List<Exp>} inputs 
     */
     constructor(name) {
         super([]);
         this.name = name;
    }
 
-   /*
-    * @param {Value} newValue : The new value
-    */
-    changeValue(newValue, env) {
-        if (env[this.name] == null) {
-            throw new Error(`Unbound variable ${this.name}`);
-        }
-        env[this.name].changeValue(newValue, env);
-    }
-
     toJS() {
         return this.addNewLineIfGlobal(this.name);
     }
 
     eval(env) {
-        let value = env[this.name].getValueObj(env);
-        return value;
+        if (env[this.name] == null) {
+            throw new Error(`Unbound variable ${this.name}`);
+        }
+        return env[this.name];
     }
 
-    getValueObj(env) {
-        return this.eval(env);
+}
+
+class Add extends Exp {
+
+    /**
+     * 
+     * @param {Exp} fst 
+     * @param {Exp} snd 
+     */
+    constructor(fst, snd) {
+        super([fst, snd]);
+    }
+
+    toJS() {
+        return `${this.inputs[0].toJS()} + ${this.inputs[1].toJS()}`;
+    }
+
+    eval(env) {
+        let newLoc = Exp.newLocation();
+        let fstLoc = new SingleLoc(this.inputs[0].eval(env));
+        let sndLoc = new SingleLoc(this.inputs[1].eval(env));
+
+        let sum = new NumValue(fstLoc.getValue() + sndLoc.getValue());
+        locToValue[newLoc] = [new AddEq(fstLoc, sndLoc), sum];
+        return newLoc;
     }
 }
 
@@ -328,33 +409,40 @@ class Variable extends ExpTrace {
  * @param {String} keyword
  * @param {JSON} env 
  */
-function evalKeyword(keyword, env, inputs) {
-    if (inputs.length != visualKeywords[keyword].length) {
+function evalKeyword(keyword, locations) {
+    if (locations.length != visualKeywords[keyword].length) {
         throw new SyntaxError(`${keyword} is supposed to take in ${visualKeywords[keyword].length} arguments!`);
     }
-    for (let i = 0; i < inputs.length; i++) {
-        if (!(inputs[i].getValueObj(env) instanceof visualKeywords[keyword][i])) {
-            let argType = inputs[i].getValueObj(env).constructor.name;
+    let newLoc = Exp.newLocation();
+    for (let i = 0; i < locations.length; i++) {
+        let valueAtLoc = locToValue[locations[i]][1];
+        if (!(valueAtLoc instanceof visualKeywords[keyword][i])) {
+            let argType = valueAtLoc.constructor.name;
             let expectedType = visualKeywords[keyword][i].name;
             throw new TypeError(`#${i + 1} argument call to function ${keyword} has incorrect type ${argType} when expected type is ${expectedType}!`);
         }
     }
-
+    let value;
     if (keyword == "Add") {
-        let shape = inputs[0].getValueObj(env);
+        let shape = locToValue[locations[0]][1];
         if (shape != null) {
             visualOutput[shape.id] = shape;
         }
-        return new Null();
+        value = new Null();
     }
     else if (keyword == "Rect") {
-        return new RectDiv(inputs[0], inputs[1], 
-                           inputs[2], inputs[3], 
-                           inputs[4], shallowCopy(env));
+        let locationEqs = [];
+        for (let l of locations) {
+            locationEqs.push(new SingleLoc(l));
+        }
+        value = new RectDiv(locationEqs);
     }
+    
+    locToValue[newLoc] = [new None(), value];
+    return newLoc;
 }
 
-class FunctionCall extends ExpTrace {
+class FunctionCall extends Exp {
 
     /**
     * Note: currently, expressions that return functions cannot be called, functions
@@ -362,7 +450,7 @@ class FunctionCall extends ExpTrace {
     * 
     * @param {String} Function name
     * @param {Value} value
-    * @param {List<ExpTrace>} args 
+    * @param {List<Exp>} args 
     */
     constructor(name, args) {
         super(args);
@@ -380,85 +468,81 @@ class FunctionCall extends ExpTrace {
     }
 
     eval(env) {
+        let locs = []
         // Evaluate the arguments
         for (let arg of this.inputs) {
-            arg.eval(env);
+            let argLoc = arg.eval(env);
+            locs.push(argLoc);
         }
 
+        let loc;
         // User defined Functions
         if (visualKeywords[this.name] == null) {
-            let lambda = env[this.name];
-            if (lambda == null) {
+            let lambdaLoc = env[this.name];
+            if (lambdaLoc == null) {
                 throw new Error(`${this.name} is not defined.`);
             }
-            if (!(lambda instanceof Lambda)) {
+            let closure = locToValue[lambdaLoc][1];
+            if (!(closure instanceof Closure)) {
                 throw new Error(`${this.name} is not a function.`);
             }
-            if (lambda.params.length != this.inputs.length) {
+            if (closure.params.length != locs.length) {
                 throw new SyntaxError(`${this.name} expects ${this.params.length} parameters but received ${this.inputs.length} arguments!`);
             }
-            this.value = lambda.callFunction(this.inputs);
+            let extendedRho = shallowCopy(env);
+
+            for (let i = 0; i < closure.params.length; i++) {
+                extendedRho[closure.params[i]] = locs[i];
+            }
+            for (let s of closure.body) {
+                s.eval(extendedRho);
+            }
+            if (closure.returnExp == null) {
+                loc = Exp.newLocation();
+                locToValue[loc] = [new None(), new Null()];
+            }
+            else {
+                loc = closure.returnExp.eval(extendedRho);
+            }
         }
         // Keywords
         else {
-            this.value = evalKeyword(this.name, env, this.inputs);
+            loc = evalKeyword(this.name, locs);
         }
-        return this.value;
-    }
-
-    /**
-     * Changes the value of a function call from the change in visual input
-     * 
-     * @param {Value} newValue 
-     */
-    changeValue(newValue, env) {
-        // If the values are equivalent, no change is needed
-        if (newValue.getValue() == this.getValueObj(env).getValue()) {
-            return;
-        }
-        let lambda = env[this.name];
-        // Extend the closure
-        let extendedEnv = shallowCopy(lambda.getValueObj(env).env);
-
-        // Map each parameter to each argument expression trace
-        for (let i = 0; i < this.inputs.length; i++) {
-            extendedEnv[lambda.params[i]] = this.inputs[i];
-        }
-        lambda.changeReturnValue(newValue, extendedEnv);
-        this.value = newValue;
+        return loc;
     }
 }
 
 /**
  * Definition is a class that stores a variable declaration's name, along
- * with its ExpTrace it was assigned
+ * with its Exp it was assigned
  */
 class Definition {
 
     /**
      * 
      * @param {String} name 
-     * @param {ExpTrace} expTrace 
+     * @param {Exp} Exp 
      * @param {String} kind 
      */
-    constructor(name, expTrace, kind) {
+    constructor(name, exp, kind) {
         this.name = name;
-        this.expTrace = expTrace;
+        this.exp = exp;
         this.kind = kind;
     }
 
     toJS() {
         if (this.kind == "function") {
-            return `function ${this.name} ${this.expTrace.toJS()}\n`;
+            // Without the equal sign!
+            return `${this.kind} ${this.name} ${this.exp.toJS()};\n`;
         }
-        
-        return `${this.kind} ${this.name} = ${this.expTrace.toJS()};\n`;
+        return `${this.kind} ${this.name} = ${this.exp.toJS()};\n`;
     }
 
     eval(env) {
-        let value = this.expTrace.eval(env);
-        env[this.name] = this.expTrace;
-        return value;
+        let loc = this.exp.eval(env);
+        env[this.name] = loc;
+        return loc;
     }
 }
 
@@ -538,11 +622,9 @@ class ShapeDiv extends Value {
 
     static idCounter = 0;
 
-    constructor(text, env) {
+    constructor() {
         super();
-        this.env = env;
         ShapeDiv.idCounter++;
-        this.text = text;
         this.id = ShapeDiv.idCounter;
     }
 
@@ -563,38 +645,32 @@ class RectDiv extends ShapeDiv {
 
     /**
      * 
-     * @param {ExpTrace} width 
-     * @param {ExpTrace} height 
-     * @param {ExpTrace} text 
-     * @param {ExpTrace} x 
-     * @param {ExpTrace} y
-     * @param {JSON} env
+     * @param {List<SingleLoc>} locations
      */
-    constructor(width, height, text, x, y, env) {
-        super(text, shallowCopy(env));
-        this.width = width;
-        this.height = height;
-        this.x = x;
-        this.y = y;
+    constructor(inputs) {
+        super();
+        this.width = inputs[0];
+        this.height = inputs[1];
+        this.text = inputs[2];
+        this.x = inputs[3];
+        this.y = inputs[4];
     }
 
     toHTML() {
         // TODO: change options to be a JSON
-        let env = this.env;
-        let width = this.width.getValueObj(env).getValue();
-        let height = this.height.getValueObj(env).getValue();
-        let x = this.x.getValueObj(env).getValue();
-        let y = this.y.getValueObj(env).getValue();
-        let text = this.text.getValueObj(env).getValue();
-        
-
-        return `<div class="shape" id = "${this.id}"
+        let width = this.width.getValue();
+        let height = this.height.getValue();
+        let x = this.x.getValue();
+        let y = this.y.getValue();
+        let text = this.text.getValue();
+        let str = `<div class="shape" id = "${this.id}"
                     style="width: ${width}px; height: ${height}px; 
                            position: relative; left: ${x}px; top: ${y}px; 
                            border: 1px solid black; background-color: blue; text-align: center;
                            line-height: ${height}px;">
                     ${text}
                 </div>`;
+        return str;
             
     }
 
@@ -604,7 +680,17 @@ class RectDiv extends ShapeDiv {
      * @param {Value} newText 
      */
     changeText(newText) {
-        this.text.changeValue(newText, this.env);
+        let outputs = this.text.change(newText, this.text.getValueObj());
+        // Deterministic output
+        if (outputs.length == 1) {
+            for (let key in outputs[0]) {
+                locToValue[key] = outputs[0][key];
+            }
+        }
+        // Nondeterministic output
+        else {
+            throw new Error("Non deterministic output not implemented");
+        }
     }
 }
 
@@ -633,9 +719,9 @@ function parseStatements(statements) {
             block.push(def);
         }
         else if (statement.type == "ExpressionStatement") {
-            let expTrace = parseExp(statement.expression);
-            expTrace.setTopLevel(true);
-            block.push(expTrace);
+            let Exp = parseExp(statement.expression);
+            Exp.setTopLevel(true);
+            block.push(Exp);
         }
     }
     return block;
@@ -648,31 +734,49 @@ function parseCode(code) {
 }
 
 function evalCode(code) {
+    Exp.reParse();
     parseCode(code);
     execCode();
 }
 
 function execCode() {
     visualOutput = {};
-    varToExp = {};
 
     for (let statement of program) {
-        statement.eval(varToExp);
+        statement.eval(varToLoc);
     }
 }
 
 /**
  * 
  * @param {JSON} exp 
- * @returns ExpTrace
+ * @returns Exp
+ */
+function parseBinaryOp(exp) {
+    let leftExp = parseExp(exp.left);
+    let rightExp = parseExp(exp.right);
+
+    if (exp.operator == "+") {
+        return new Add(leftExp, rightExp);
+    }
+    else {
+        throw new SyntaxError(exp.operator + " is currently not supported!");
+    }
+}
+
+/**
+ * 
+ * @param {JSON} exp 
+ * @returns Exp
  */
 function parseExp(exp) {
     if (exp.type == "Literal") {
+        let newloc = Exp.newLocation();
         if (typeof exp.value === "number") {
-            return new Num(exp.value);
+            return new Num(newloc, exp.value);
         }
         else if (typeof exp.value == "string") {
-            return new Str(exp.value);
+            return new Str(newloc, exp.value);
         }
         throw new SyntaxError("Unsupported literal");
     }
@@ -708,6 +812,9 @@ function parseExp(exp) {
         let body = parseStatements(exp.body.body);
         let lambda = new Lambda(params, body, returnStatement, exp.type);
         return lambda;
+    }
+    else if (exp.type == "BinaryExpression") {
+        return parseBinaryOp(exp);
     }
     throw new SyntaxError(exp.type + " is currently not supported!");
 }
