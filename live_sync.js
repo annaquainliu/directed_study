@@ -24,6 +24,14 @@ function AddSquare (text) {
 }
 AddSquare("sds");
 AddSquare("I Love you");
+
+function AddSquare (text, y) {
+    let sq = Rect(100, 100, text, 50, y);
+    Add(sq);
+}
+let y = 100;
+AddSquare("sds", y);
+AddSquare("I Love you", y + 150);
  * 
  * 
  *  RECT
@@ -38,6 +46,7 @@ AddSquare("I Love you");
  * 
  * This shows that the variable expression trace should hold a reference to the environemnt
  * it was created in
+ * 
  * 
 function makeText(text) {
     return text;
@@ -162,8 +171,16 @@ class SingleLoc extends Equation {
     }
 
     change(val) {
+        console.log("changing ", this.getValue(), "to be", val.getValue());
+        // No need to change this location if it is already equivalent to val
+        if (this.getValueObj().equals(val)) {
+            return [];
+        }
         let trace = locToValue[this.loc];
+        // Change the location's dependencies
         let outputs = trace[0].change(val);
+        // After changing the location's dependencies, update the value of the location
+        // in sigma.
         for (let output of outputs) {
             output[this.loc] = [trace[0], val];
         }
@@ -195,7 +212,10 @@ class AddEq extends Equation {
     change(val) {
         let output1 = this.fst.change(new NumValue(val.getValue() - this.snd.getValue()));
         let output2 = this.snd.change(new NumValue(val.getValue() - this.fst.getValue()));
-        return output1.concat(output2);
+        console.log("output1", output1);
+        console.log("output2", output2);
+        let union = output1.concat(output2);
+        return union;
     }
 }
 
@@ -313,7 +333,8 @@ class Literal extends Exp {
     }
 
     toJS() {
-        return `${locToValue[this.loc][1].getValue()}`;
+        let value = locToValue[this.loc][1].getValue();
+        return value;
     }
 
     eval(env) {
@@ -334,7 +355,7 @@ class Num extends Literal {
     }
 
     toJS() {
-        return this.addNewLineIfGlobal(`${this.value.getValue()}`);
+        return this.addNewLineIfGlobal(super.toJS());
     }
 }
 
@@ -349,7 +370,6 @@ class Str extends Literal {
 
     toJS() {
         let jsStr = this.addNewLineIfGlobal('"' + super.toJS() + '"');
-        console.log(jsStr, "location is ", this.loc);
         return jsStr;
     }
 }
@@ -406,6 +426,8 @@ class Add extends Exp {
 }
 
 /**
+ * 
+ * 
  * @param {String} keyword
  * @param {JSON} env 
  */
@@ -491,12 +513,14 @@ class FunctionCall extends Exp {
             }
             let extendedRho = shallowCopy(env);
 
+            // Extend rho to have the parameters
             for (let i = 0; i < closure.params.length; i++) {
                 extendedRho[closure.params[i]] = locs[i];
             }
             for (let s of closure.body) {
                 s.eval(extendedRho);
             }
+            // If the function does not return anything
             if (closure.returnExp == null) {
                 loc = Exp.newLocation();
                 locToValue[loc] = [new None(), new Null()];
@@ -516,6 +540,7 @@ class FunctionCall extends Exp {
 /**
  * Definition is a class that stores a variable declaration's name, along
  * with its Exp it was assigned
+ * 
  */
 class Definition {
 
@@ -554,12 +579,20 @@ class Value {
     getValue() {
         throw new TypeError("Called completely abstract getValue() function!");
     }
+
+    equals(val) {
+        throw new TypeError("Called completely abstract equals(val) function!");
+    }
 };
 
 class Null extends Value {
 
     constructor() {
         super();
+    }
+
+    equals(val) {
+        return val instanceof Null;
     }
 }
 
@@ -571,6 +604,10 @@ class StrValue extends Value {
     constructor(value) {
         super();
         this.value = value;
+    }
+
+    equals(val) {
+        return (val instanceof StrValue) && val.getValue() == this.getValue();
     }
 
     /**
@@ -597,6 +634,10 @@ class NumValue extends Value {
     getValue() {
         return this.value;
     }
+
+    equals(val) {
+        return (val instanceof NumValue) && val.getValue() == this.getValue();
+    }
 }
 
 /**
@@ -613,6 +654,9 @@ class Closure extends Value {
         this.returnExp = lambda.returnExp;
     }
 
+    equals(val) {
+        return false;
+    }
 }
 
 /**
@@ -622,22 +666,55 @@ class ShapeDiv extends Value {
 
     static idCounter = 0;
 
-    constructor() {
+    /**
+     * 
+     * @param {SingleLoc} text 
+     * @param {SingleLoc} x 
+     * @param {SingleLoc} y 
+     */
+    constructor(text, x, y) {
         super();
         ShapeDiv.idCounter++;
         this.id = ShapeDiv.idCounter;
+        this.text = text;
+        this.x = x;
+        this.y = y;
     }
 
     toHTML() {
         throw new Error("Abstract Shape method toString() called!");
     };
 
-    changeText(changed) {
-        throw new Error("Abstract Shape method changeText() called!");
+
+
+    /**
+     * Changes the text of the div to be the new text
+     * 
+     * @param {Value} newText 
+     */
+    changeText(newText) {
+        let outputs = this.text.change(newText);
+        return makeChangeToCode(outputs);
     }
 
-    drag(newX, newY) {
-        throw new Error("Abstract Shape method drag() called!");
+    /**
+     * 
+     * @param {NumValue} x 
+     * @returns {JSON}
+     */
+    moveX(x) {
+        let outputs = this.x.change(x);
+        return makeChangeToCode(outputs);
+    }
+
+    /**
+     * 
+     * @param {NumValue} x 
+     * @returns {JSON}
+     */
+    moveY(y) {
+        let outputs = this.y.change(y);
+        return makeChangeToCode(outputs);
     }
 }
 
@@ -648,12 +725,9 @@ class RectDiv extends ShapeDiv {
      * @param {List<SingleLoc>} locations
      */
     constructor(inputs) {
-        super();
+        super(inputs[2], inputs[3], inputs[4]);
         this.width = inputs[0];
         this.height = inputs[1];
-        this.text = inputs[2];
-        this.x = inputs[3];
-        this.y = inputs[4];
     }
 
     toHTML() {
@@ -664,33 +738,11 @@ class RectDiv extends ShapeDiv {
         let y = this.y.getValue();
         let text = this.text.getValue();
         let str = `<div class="shape" id = "${this.id}"
-                    style="width: ${width}px; height: ${height}px; 
-                           position: relative; left: ${x}px; top: ${y}px; 
-                           border: 1px solid black; background-color: blue; text-align: center;
-                           line-height: ${height}px;">
+                    style="width: ${width}px; height: ${height}px; position: absolute; left: ${x}px; top: ${y}px; border: 1px solid black; background-color: blue; text-align: center; line-height: ${height}px;">
                     ${text}
                 </div>`;
         return str;
             
-    }
-
-    /**
-     * Changes the text of the div to be the new text
-     * 
-     * @param {Value} newText 
-     */
-    changeText(newText) {
-        let outputs = this.text.change(newText, this.text.getValueObj());
-        // Deterministic output
-        if (outputs.length == 1) {
-            for (let key in outputs[0]) {
-                locToValue[key] = outputs[0][key];
-            }
-        }
-        // Nondeterministic output
-        else {
-            throw new Error("Non deterministic output not implemented");
-        }
     }
 }
 
@@ -842,16 +894,81 @@ function visualOutputToHTML() {
     return html;
 }
 
+function makeChangeToCode(outputs) {
+
+    let results = [];
+    let possibleSigmas = [];
+    // For every single possible output, create a new sigma that includes the output
+    for (let output of outputs) {
+        let possible = shallowCopy(locToValue);
+        for (let l in output) {
+            possible[l] = output[l];
+        }
+        possibleSigmas.push(possible);
+    }
+
+    // Then execute the code for every single possible sigma and store the resulting 
+    // program code and visual output HTML to show to the user
+    for (let i = 0; i < possibleSigmas.length; i++) {
+        locToValue = possibleSigmas[i];
+        execCode();
+        results.push({code : programToString(), 
+                       visualOutput: visualOutputToHTML(), 
+                       sigma: possibleSigmas[i]});
+    }
+
+    // If it is not a deterministic change, then temporarily set sigma to the first result
+    if (possibleSigmas.length > 1) {
+        locToValue = possibleSigmas[0];
+    }
+    // If the we tried to do a change that resulted in no changes
+    if (results.length == 0) {
+        results.push({code : programToString(), 
+                      visualOutput: visualOutputToHTML(), 
+                      sigma: locToValue})
+    }
+    return results;
+}
+
 /**
+ * Note: Changing text will always be a deterministic change
  * 
  * @param {Integer} id 
  * @param {String} newText 
  */
 function changeText(id, newText) {
     if (visualOutput[id] == null) {
-        return;
+        throw new Error("Shape element must be selected!");
     }
-    visualOutput[id].changeText(new StrValue(newText));
+    return visualOutput[id].changeText(new StrValue(newText));
 }
 
-module.exports = {visualOutputToHTML, evalCode, changeText, programToString, execCode};
+/**
+ * 
+ * @param {Integer} id 
+ * @param {String} axis
+ * @param {String} value
+ * @returns 
+ */
+function moveShape(id, axis, value) {
+
+    if (visualOutput[id] == null) {
+        throw new Error("Shape element must be selected!");
+    }
+    if (isNaN(value)) {
+        throw new Error(`${axis} coord must be a valid integer value!`)
+    }
+
+    if (axis == "x") {
+        return visualOutput[id].moveX(new NumValue(parseInt(value)));
+    }
+    else {
+        return visualOutput[id].moveY(new NumValue(parseInt(value)));
+    }
+}
+
+function changeSigma(newSigma) {
+    locToValue = newSigma;
+}
+
+module.exports = {visualOutputToHTML, evalCode, changeText, moveShape, changeSigma};

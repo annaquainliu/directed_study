@@ -18,4 +18,3 @@ for (let child of visualDiv.children) {
         .then((json) => console.log(json));
     });
 }
-

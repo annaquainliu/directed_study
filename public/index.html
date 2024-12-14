@@ -12,14 +12,26 @@
             <textarea id="code_input" name="code"></textarea>
             <button type="submit">Compute</button>
         </form>
-        <div id="toolbar">
-            <form id="change_text_form" action="/change_text">
-                <input name="change_text" placeholder="Click Div and Change Text">
-                <button type="submit">Change Text</button>
-            </form>
-        </div>
-        <div id="visual">
-            <!-- visual -->
+        <div>
+            <div id="toolbar">
+                <form id="change_text_form" action="/change_text">
+                    <input name="change_text" placeholder="Click Div and Change Text">
+                    <button type="submit">Change Text</button>  
+                </form>
+                <div>
+                    <form id="move_x" action="/move_x">
+                        <input name="move_x" placeholder="x coord">
+                        <button type="submit">Move X Coord</button> 
+                    </form>
+                    <form id="move_y" action="/move_y">
+                        <input name="move_y" placeholder="y coord">
+                        <button type="submit">Move Y Coord</button> 
+                    </form>
+                </div>
+            </div>
+            <div id="visual">
+                <!-- visual -->
+            </div>
         </div>
     </div>
 </body>
