@@ -288,9 +288,9 @@ class Lambda extends Exp {
 
     eval(rho) {
         let newLoc = Exp.newLocation();
-        let value = new Closure({params : this.params, returnExp : this.returnExp, type : this.type, body: this.inputs}, 
-                                shallowCopy(rho));
-        locToValue[newLoc] = [new None(), value];
+        let closure = new Closure({params : this.params, returnExp : this.returnExp, type : this.type, body: this.inputs}, 
+                                  shallowCopy(rho));
+        locToValue[newLoc] = [new None(), closure];
         return newLoc;
     }
 
@@ -566,6 +566,11 @@ class Definition {
 
     eval(env) {
         let loc = this.exp.eval(env);
+        // If the definition is a function, the closure should have access to the function itself
+        if (this.kind == "function") {
+            let value = locToValue[loc][1];
+            value.env[this.name] = value;
+        }
         env[this.name] = loc;
         return loc;
     }
