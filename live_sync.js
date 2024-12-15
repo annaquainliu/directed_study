@@ -81,17 +81,15 @@ let sq2 = Rect(100, 100, hello("bongo"), 200, 200);
 Add(sq);
 Add(sq2);
 
--------------------------------------------------------------
-let text2 = "asdsad"
-let text = text2
-let sq = Rect(100, 100, text, 50, 50);
 
-At this point, text will be set to a value that has a notated location.
-Every value has a location. (location |--> value)
+Recursion and if statements work!
+function dum (boo){
+if (boo) {
+return dum(false);
+}return "bing bong";
+};
+Add(Rect(100, 100, dum(true), 100, 300));
 
-This model only changes *values*.
-------------------------------------------------------------
-let x = y + z
 
  */
 /**
@@ -171,7 +169,6 @@ class SingleLoc extends Equation {
     }
 
     change(val) {
-        console.log("changing ", this.getValue(), "to be", val.getValue());
         // No need to change this location if it is already equivalent to val
         if (this.getValueObj().equals(val)) {
             return [];
@@ -212,8 +209,6 @@ class AddEq extends Equation {
     change(val) {
         let output1 = this.fst.change(new NumValue(val.getValue() - this.snd.getValue()));
         let output2 = this.snd.change(new NumValue(val.getValue() - this.fst.getValue()));
-        console.log("output1", output1);
-        console.log("output2", output2);
         let union = output1.concat(output2);
         return union;
     }
@@ -270,25 +265,46 @@ class Exp {
 
 }
 
+
+/**
+ * Class that represents a return statement
+ */
+class Return extends Exp {
+
+    /**
+     * 
+     * @param {Exp} returnExp 
+     */
+    constructor(returnExp) {
+        super([returnExp]);
+    }
+
+    eval(rho) {
+        return this.inputs[0].eval(rho);
+    }
+
+    toJS() {
+        return `return ${this.inputs[0].toJS()};\n`;
+    }
+}
+
 class Lambda extends Exp {
 
     /**
      * 
      * @param {List<String>} params 
      * @param {List<Definition | Exp>} body 
-     * @param {Exp} returnExp
      * @param {String} type : Either arrow or function declaration
      */
-    constructor(params, body, returnExp, type) {
+    constructor(params, body, type) {
         super(body);
         this.params = params;
-        this.returnExp = returnExp;
         this.type = type;
     }
 
     eval(rho) {
         let newLoc = Exp.newLocation();
-        let closure = new Closure({params : this.params, returnExp : this.returnExp, type : this.type, body: this.inputs}, 
+        let closure = new Closure({params : this.params, type : this.type, body: this.inputs}, 
                                   shallowCopy(rho));
         locToValue[newLoc] = [new None(), closure];
         return newLoc;
@@ -306,14 +322,7 @@ class Lambda extends Exp {
             jsStr += " => ";
         }
         
-        jsStr += "{\n";
-        for (let statement of this.inputs) {
-            jsStr += statement.toJS();
-        }
-        if (this.returnExp != null) {
-            jsStr += `return ${this.returnExp.toJS()};\n`;
-        }
-        jsStr += "}";
+        jsStr += blockToJS(this.inputs);
         return this.addNewLineIfGlobal(jsStr);
     }
 
@@ -371,6 +380,100 @@ class Str extends Literal {
     toJS() {
         let jsStr = this.addNewLineIfGlobal('"' + super.toJS() + '"');
         return jsStr;
+    }
+}
+
+class Bool extends Literal {
+
+    constructor(loc, value) {
+        if (typeof value !== "boolean") {
+            throw new TypeError("Tried to construct a Bool literal with a non-boolean value.");
+        }
+        super(loc, new BoolValue(value));
+    }
+
+    toJS() {
+        return this.addNewLineIfGlobal(super.toJS());
+    }
+}
+/**
+ * Given a list of statements and a rho environment, excecute the block 
+ * and return if necessary.
+ * 
+ * @param {List<Exp | Definition>} block 
+ * @param {JSON} rho
+ * @returns {Integer} location
+ */
+function executeBlock(block, rho) {
+    for (let statement of block) {
+        let loc = statement.eval(rho);
+        if (statement instanceof Return) {
+            return loc;
+        }
+    }
+
+    let newLoc = Exp.newLocation();
+    locToValue[newLoc] = [new None(), new Null()];
+    return newLoc;
+}
+
+/**
+ * 
+ * @param {List<Exp | Definition>} block 
+ * @returns {String} js
+ */
+function blockToJS(block) {
+    let str = "{\n";
+    for (let statement of block) {
+        str += statement.toJS();
+    }
+    str += "}"
+    return str;
+}
+
+class If extends Exp {
+
+    /**
+     * 
+     * @param {Exp} test 
+     * @param {List<Exp | Definition>} trueCase 
+     * @param {List<Exp | Definition>} falseCase 
+     */
+    constructor(test, trueCase, falseCase) {
+        super([test, trueCase, falseCase]);
+    }
+
+    eval(rho) {
+        let conditionLoc = new SingleLoc(this.inputs[0].eval(rho));
+        if (!(conditionLoc.getValueObj() instanceof BoolValue)) {
+            throw Error("If conditional must result in a boolean value.");
+        }
+        let block = null;
+        // Explicitly if the value is a true boolean
+        if (conditionLoc.getValue() === true) {
+            block = this.inputs[1];
+        }
+        else {
+            block = this.inputs[2];
+        }
+        // If there is no appropriate block to be executed, return null
+        if (block == null) {
+            let newLoc = Exp.newLocation();
+            locToValue[newLoc] = [new None(), new Null()];
+            return newLoc;
+        }
+        return executeBlock(block, rho);
+    }
+
+    toJS() {
+        let str = `if (${this.inputs[0].toJS()}) `;
+        str += blockToJS(this.inputs[1]);
+
+        if (this.inputs[2] != null) {
+            str += blockToJS(this.inputs[2]);
+        }
+        return str;
+        
     }
 }
 
@@ -517,17 +620,7 @@ class FunctionCall extends Exp {
             for (let i = 0; i < closure.params.length; i++) {
                 extendedRho[closure.params[i]] = locs[i];
             }
-            for (let s of closure.body) {
-                s.eval(extendedRho);
-            }
-            // If the function does not return anything
-            if (closure.returnExp == null) {
-                loc = Exp.newLocation();
-                locToValue[loc] = [new None(), new Null()];
-            }
-            else {
-                loc = closure.returnExp.eval(extendedRho);
-            }
+            loc = executeBlock(closure.body, extendedRho);
         }
         // Keywords
         else {
@@ -601,6 +694,29 @@ class Null extends Value {
     }
 }
 
+class BoolValue extends Value {
+
+    /**
+     * 
+     * @param {Bool} value 
+     */
+    constructor(value) {
+        super();
+        this.value = value;
+    }
+
+    equals(val) {
+        return (val instanceof BoolValue) && val.getValue() == this.getValue();
+    }
+
+    /**
+     * @returns {Boolean}
+     */
+     getValue() {
+        return this.value;
+    }
+}
+
 class StrValue extends Value {
 
     /**
@@ -656,7 +772,6 @@ class Closure extends Value {
         this.env = env;
         this.params = lambda.params;
         this.body = lambda.body;
-        this.returnExp = lambda.returnExp;
     }
 
     equals(val) {
@@ -780,6 +895,13 @@ function parseStatements(statements) {
             Exp.setTopLevel(true);
             block.push(Exp);
         }
+        else if (statement.type == "ReturnStatement" ||
+            statement.type == "IfStatement")
+        {
+            let exp = parseExp(statement);
+            exp.setTopLevel(true);
+            block.push(exp);
+        }
     }
     return block;
 }
@@ -835,7 +957,22 @@ function parseExp(exp) {
         else if (typeof exp.value == "string") {
             return new Str(newloc, exp.value);
         }
+        else if (typeof exp.value == "boolean") {
+            return new Bool(newloc, exp.value);
+        }
         throw new SyntaxError("Unsupported literal");
+    }
+    else if (exp.type == "IfStatement") {
+        let conditionExp = parseExp(exp.test);
+        let trueBlock = parseStatements(exp.consequent.body);
+        let falseBlock = null;
+        if (exp.alternate != null) {
+            falseBlock = parseStatements(exp.alternate.body);
+        }
+        return new If(conditionExp, trueBlock, falseBlock);
+    }
+    else if (exp.type == "ReturnStatement") {
+        return new Return(parseExp(exp.argument));
     }
     // Function call or keyword
     else if (exp.type == "CallExpression") {
@@ -859,15 +996,8 @@ function parseExp(exp) {
             }
             params.push(param.name);
         }
-        let lastExp = exp.body.body[exp.body.body.length - 1];
-        let returnStatement = null;
-        if (lastExp.type == "ReturnStatement") {
-            returnStatement = parseExp(lastExp.argument);
-            // Remove the return statement
-            exp.body.body.pop(); 
-        }
         let body = parseStatements(exp.body.body);
-        let lambda = new Lambda(params, body, returnStatement, exp.type);
+        let lambda = new Lambda(params, body, exp.type);
         return lambda;
     }
     else if (exp.type == "BinaryExpression") {
