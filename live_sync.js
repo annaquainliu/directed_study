@@ -514,7 +514,7 @@ class Add extends Exp {
     }
 
     toJS() {
-        return `${this.inputs[0].toJS()} + ${this.inputs[1].toJS()}`;
+        return this.addNewLineIfGlobal(`${this.inputs[0].toJS()} + ${this.inputs[1].toJS()}`);
     }
 
     eval(env) {
@@ -525,6 +525,29 @@ class Add extends Exp {
         let sum = new NumValue(fstLoc.getValue() + sndLoc.getValue());
         locToValue[newLoc] = [new AddEq(fstLoc, sndLoc), sum];
         return newLoc;
+    }
+}
+
+class Negate extends Exp {
+
+
+    constructor(exp) {
+        super([exp]);
+    }
+
+    eval(env) {
+        
+        let value = new SingleLoc(this.inputs[0].eval(env)).getValueObj();
+        if (!(value instanceof NumValue)) {
+            throw new Error("Cannot negate non number value");
+        }
+        let newLoc = Exp.newLocation();
+        locToValue[newLoc] = [new None(), new NumValue(-1 * value.getValue())];
+        return newLoc;
+    }
+
+    toJS() {
+        this.addNewLineIfGlobal(`-(${this.inputs[0].toJS()})`);
     }
 }
 
@@ -961,6 +984,14 @@ function parseExp(exp) {
             return new Bool(newloc, exp.value);
         }
         throw new SyntaxError("Unsupported literal");
+    }
+    else if (exp.type == "UnaryExpression") {
+        if (exp.operator == "-") {
+            return new Negate(parseExp(exp.argument));
+        }
+        else {
+            throw new Error(`Unsupported unary expression ${exp.operator}`);
+        }
     }
     else if (exp.type == "IfStatement") {
         let conditionExp = parseExp(exp.test);
